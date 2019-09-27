@@ -31,7 +31,8 @@
 # LibSoup does not provide an easy way to retrieve its version other than its
 # .pc file, so we need to rely on PC_LIBSOUP_VERSION and REQUIRE the .pc file
 # to be found.
-set( ENV{PKG_CONFIG_PATH} ENV{PKG_CONFIG_PATH} /Library/Frameworks/GStreamer.framework/Libraries/pkgconfig )
+set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH} /Library/Frameworks/GStreamer.framework/Libraries/pkgconfig/")
+
 FIND_PACKAGE(PkgConfig)
 PKG_CHECK_MODULES(PC_LIBSOUP REQUIRED QUIET libsoup-2.4)
 
