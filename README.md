@@ -17,7 +17,7 @@ If you are running this on any modern Linux distro you should already have most 
 
 `sudo apt-get install -y gstreamer1.0-tools gstreamer1.0-nice gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-plugins-good libgstreamer1.0-dev libglib2.0-dev libgstreamer-plugins-bad1.0-dev libsoup2.4-dev libjson-glib-dev`
 
-On macOS and Windows( untested ) if you opt-in for a complete installation of GStreamer binary and development packages you should have all the required dependencies installed as part of that process.
+On macOS and Windows( untested ) if you opt-in for a complete installation of GStreamer binary and development packages you should have all the required dependencies installed as part of that process. You can download the relevant packages from [this link](https://gstreamer.freedesktop.org/download/). You should also build Cinder with the GStreamer option enabled which is disabled by default on macOS/Windows i.e `-DCINDER_MAC_USE_GSTREAMER=1` or `-DCINDER_MSW_USE_GSTREAMER=1` for Windows.
 
 The block includes a very basic signaling nodejs server, based on the python version included with the demos, that can be used for testing locally. The relevant files are located under the **signaling** directory and you can install the dependencies by running `npm install`. To start the server run `node server` in the same directory.
 
