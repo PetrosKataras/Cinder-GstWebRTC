@@ -48,7 +48,6 @@
 # OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
 # ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH} /Library/Frameworks/GStreamer.framework/Libraries/pkgconfig/")
 find_package(PkgConfig)
 
 # Helper macro to find a GStreamer plugin (or GStreamer itself)
