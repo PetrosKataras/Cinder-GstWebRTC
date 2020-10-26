@@ -1,7 +1,9 @@
 #pragma once
 
-#include "AsyncSurfaceReader.h"
 #include <thread>
+#include "cinder/app/App.h"
+#include "cinder/Signals.h"
+#include "AsyncSurfaceReader.h"
 //> GST
 #include <gst/gst.h>
 #include <gst/sdp/sdp.h>
@@ -9,7 +11,6 @@
 #include <gst/webrtc/webrtc.h>
 //> Signalling
 #include <libsoup/soup.h>
-#include <json-glib/json-glib.h>
 
 /*
  * Based on https://github.com/centricular/gstwebrtc-demos/blob/master/sendrecv/gst/webrtc-sendrecv.c
@@ -25,18 +26,22 @@ public:
 		std::string videoPipelineDescr;
 		int width{ -1 };
 		int height{ -1 };
-		int remotePeerId{ -1 };
-		int localPeerId{ -1 };
+		std::string remotePeerId{ -1 };
+		uint localPeerId{ 0 };
 		std::string serverURL;
 		std::string stunServer;
 	};
-	CinderGstWebRTC( const PipelineData pipelineData );
+	CinderGstWebRTC( const PipelineData pipelineData, const ci::app::WindowRef& window = nullptr );
 	~CinderGstWebRTC();
 	void startCapture();
 	void endCapture();
 	void streamCapture();
+	ci::gl::TextureRef getStreamTexture();
+	const bool dataChannelReady() const;
+	void sendStringMsg( const std::string msg );
+	ci::signals::Signal<void()>& getDataChannelOpenedSignal() { return mDataChannelOpenSignal; };
+	ci::signals::Signal<void( std::string )>& getDataChannelMsgSignal() { return mDataChannelMsgSignal; };
 private:
-	struct GstData {
 		enum ConnectionState {
 			CONNECTION_STATE_UNKNOWN = 0,
 			CONNECTION_STATE_ERROR = 1, /* generic error */
@@ -56,17 +61,11 @@ private:
 			PEER_CALL_STOPPED,
 			PEER_CALL_ERROR,
 		};
-		GstElement* appsrc{ nullptr };
-		GstElement* webrtc{ nullptr };
-		SoupWebsocketConnection* wsconn{ nullptr };
-		GstElement* pipeline;
-		ConnectionState state{ CONNECTION_STATE_UNKNOWN };
-		PipelineData* pipelineData{ nullptr };
-	};
 	bool initializeGStreamer();
 	void startGMainLoopThread();
 	void startGMainLoop( GMainLoop* loop );
 	void connectToServerAsync();
+	void setPipelineEncoderName( std::string& pd );
 	static void onServerConnected( SoupSession* session, GAsyncResult* result, gpointer userData );
 	static void registerWithServer( gpointer userData );
 	static void onServerClosed( SoupWebsocketConnection* wsconn, gpointer userData );
@@ -75,17 +74,41 @@ private:
 	static bool startPipeline( gpointer userData );
 	static void onNegotionNeeded( GstElement* element, gpointer userData );
 	static void onIceCandidate( GstElement* webrtc, guint mlineindex, gchar* candidate, gpointer userData );
+	static void onIceGatheringState( GstElement* webrtc, GParamSpec* pspec, gpointer userData );
+	static void onIceConnectionState( GstElement* webrtc, GParamSpec* pspec, gpointer userData );
+#if defined( ENABLE_INCOMING_VIDEO_STREAM ) // stub - not implemented yet..
 	static void onIncomingStream( GstElement* webrtc, GstPad* pad, GstElement* pipeline );
 	static void onIncomingDecodebinStream( GstElement* decodebin, GstPad* pad, GstElement* pipeline );
 	static void handleMediaStreams( GstPad* pad, GstElement* pipeline, const char* convertName, const char* sinkName );
+#endif
 	static void onOfferCreated( GstPromise* promise, gpointer userData );
 	static void sendSdpOffer( GstWebRTCSessionDescription* offer, gpointer userData );
-	static std::string getConnectionStateString( const GstData::ConnectionState connectionState );
+	static void connectDataChannelSignals( GObject* dataChannel, gpointer userData );
+	static void onDataChannelError( GObject* dc, gpointer userData );
+	static void onDataChannelOpen( GObject* dc, gpointer userData );
+	static void onDataChannelClose( GObject* dc, gpointer userData );
+	static void onDataChannelMsg( GObject* dc, gchar* str, gpointer userData );
+	static void onDataChannel( GstElement* webrtc, GObject* dc, gpointer userData );
+	static std::string getConnectionStateString( const ConnectionState connectionState );
 private:
-	GstData mGstData;
-	std::thread mGMainLoopThread;
+	ci::SurfaceRef mCaptureSurface;
 	std::unique_ptr<AsyncSurfaceReader> mAsyncSurfaceReader;
+
+	ci::app::WindowRef mWindow;
+	int mButtonMask{ 0 };
+	int mMouseButtonInitiator{ 0 };
+
+	std::thread mGMainLoopThread;
 	GMainLoop* mGMainLoop;
 	PipelineData mPipelineData;
-	ci::SurfaceRef mCaptureSurface;
+	GstClockTime mTimestamp{ 0 };
+	GstElement* mAppsrc{ nullptr };
+	GstElement* mWebRTC{ nullptr };
+	GObject* mDataChannel{ nullptr };
+	SoupWebsocketConnection* mWSConn{ nullptr };
+	GstElement* mPipeline{ nullptr };
+	ci::signals::Signal<void()> mDataChannelOpenSignal;
+	ci::signals::Signal<void( std::string )> mDataChannelMsgSignal;
+	ConnectionState state{ CONNECTION_STATE_UNKNOWN };
+	std::pair<std::string, std::string> mEncoder;
 };

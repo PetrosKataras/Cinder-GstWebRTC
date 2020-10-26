@@ -1,35 +1,21 @@
 #include "CinderGstWebRTC.h"
 #include <gst/app/app.h>
-#include "cinder/app/App.h"
+#include "cinder/Utilities.h"
+#define CI_MIN_LOG_LEVEL 2
 #include "cinder/Log.h"
+#include "nlohmann/json.hpp"
+#include <regex>
 
 using namespace ci;
 using namespace ci::app;
+using json = nlohmann::json;
 
-#define RTP_CAPS_OPUS "application/x-rtp,media=audio,encoding-name=OPUS,payload="
-
-static gchar* get_string_from_json_object( JsonObject * object )
-{
-	JsonNode *root;
-	JsonGenerator *generator;
-	gchar *text;
-
-	/* Make it the root node */
-	root = json_node_init_object (json_node_alloc (), object);
-	generator = json_generator_new ();
-	json_generator_set_root (generator, root);
-	text = json_generator_to_data (generator, NULL);
-
-	/* Release everything */
-	g_object_unref (generator);
-	json_node_free (root);
-	return text;
-} 
-
-CinderGstWebRTC::CinderGstWebRTC( const PipelineData pipelineData )
+CinderGstWebRTC::CinderGstWebRTC( const PipelineData pipelineData, const app::WindowRef& window )
 : mPipelineData( pipelineData )
+, mWindow( window )
 {
 	mAsyncSurfaceReader = std::make_unique<AsyncSurfaceReader>( mPipelineData.width, mPipelineData.height );
+	setPipelineEncoderName( mPipelineData.videoPipelineDescr );
 	initializeGStreamer();
 	startGMainLoopThread();
 	connectToServerAsync();
@@ -37,11 +23,11 @@ CinderGstWebRTC::CinderGstWebRTC( const PipelineData pipelineData )
 
 CinderGstWebRTC::~CinderGstWebRTC()
 {
-	if( mGstData.wsconn ) {
-		if( soup_websocket_connection_get_state( mGstData.wsconn ) == SOUP_WEBSOCKET_STATE_OPEN ) {
-			soup_websocket_connection_close( mGstData.wsconn, 1000, "" );
+	if( mWSConn ) {
+		if( soup_websocket_connection_get_state( mWSConn ) == SOUP_WEBSOCKET_STATE_OPEN ) {
+			soup_websocket_connection_close( mWSConn, 1000, "" );
 		}
-		else g_object_unref( mGstData.wsconn );
+		else g_object_unref( mWSConn );
 	}
 	if( g_main_loop_is_running( mGMainLoop ) ) {
 		g_main_loop_quit( mGMainLoop );
@@ -55,162 +41,156 @@ CinderGstWebRTC::~CinderGstWebRTC()
 
 void CinderGstWebRTC::registerWithServer( gpointer userData )
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
 	gchar* hello;
-	hello = g_strdup_printf("HELLO %i", gstData->pipelineData->localPeerId );
-	if( soup_websocket_connection_get_state( gstData->wsconn ) !=
+	hello = g_strdup_printf("HELLO %u", parent->mPipelineData.localPeerId );
+	if( soup_websocket_connection_get_state( parent->mWSConn ) !=
 		SOUP_WEBSOCKET_STATE_OPEN ) {
-		CI_LOG_E( "Failed to register hello with server since the ws connection seems not to be open!" );
+		CI_LOG_E( "Failed to register with server - ws connection seems to be closed!" );
 		return;
 	}
-	CI_LOG_I( "Registering id: "<< std::to_string( gstData->pipelineData->remotePeerId ) << " with server..." );
-	gstData->state = GstData::SERVER_REGISTERING;
-	soup_websocket_connection_send_text( gstData->wsconn, hello );
+	CI_LOG_I( "Registering id: "<< parent->mPipelineData.remotePeerId << " with server..." );
+	parent->state = SERVER_REGISTERING;
+	soup_websocket_connection_send_text( parent->mWSConn, hello );
+	g_free( hello );
 }
 
 void CinderGstWebRTC::onServerClosed( SoupWebsocketConnection* wsconn, gpointer userData )
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
-	gstData->state = GstData::SERVER_CLOSED;
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
+	parent->state = SERVER_CLOSED;
 }
 
 bool CinderGstWebRTC::setupCall( gpointer userData )
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
 	gchar* msg{ nullptr };
-	if( soup_websocket_connection_get_state( gstData->wsconn ) !=
+	if( soup_websocket_connection_get_state( parent->mWSConn ) !=
 		SOUP_WEBSOCKET_STATE_OPEN ) {
 		return false;
 	}
-	CI_LOG_I( "Setting up signalling server call with peer: " << std::to_string( gstData->pipelineData->remotePeerId ) );
-	gstData->state = GstData::PEER_CONNECTING;
+	CI_LOG_I( "Setting up signalling server call with peer: " << parent->mPipelineData.remotePeerId );
+	parent->state = PEER_CONNECTING;
 	msg = g_strdup_printf( "SESSION %s %s",
-		std::to_string( gstData->pipelineData->localPeerId ).c_str(),
-	 std::to_string( gstData->pipelineData->remotePeerId ).c_str() );
-	soup_websocket_connection_send_text( gstData->wsconn, msg );
+		std::to_string( parent->mPipelineData.localPeerId ).c_str(),
+ 	 	 parent->mPipelineData.remotePeerId.c_str() );
+	soup_websocket_connection_send_text( parent->mWSConn, msg );
 	g_free( msg );
 	return true;
 }
 
 void CinderGstWebRTC::onOfferCreated( GstPromise* promise, gpointer userData )
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
 	GstWebRTCSessionDescription* offer{ nullptr };
 	const GstStructure* reply;
-	g_assert_cmphex( gstData->state, ==, GstData::PEER_CALL_NEGOTIATING );
+	g_assert_cmphex( parent->state, ==, PEER_CALL_NEGOTIATING );
 	g_assert_cmphex( gst_promise_wait( promise ), ==, GST_PROMISE_RESULT_REPLIED );
 	reply = gst_promise_get_reply( promise );
 	gst_structure_get( reply, "offer", GST_TYPE_WEBRTC_SESSION_DESCRIPTION, &offer, nullptr );
 	gst_promise_unref( promise );
 
 	promise = gst_promise_new();
-	g_signal_emit_by_name( gstData->webrtc, "set-local-description", offer, promise );
+	g_signal_emit_by_name( parent->mWebRTC, "set-local-description", offer, promise );
 	gst_promise_interrupt( promise );
 	gst_promise_unref( promise );
 	
-	sendSdpOffer( offer, gstData );
+	sendSdpOffer( offer, parent );
 	gst_webrtc_session_description_free( offer );
 	
 }
 
 void CinderGstWebRTC::sendSdpOffer( GstWebRTCSessionDescription* offer, gpointer userData )
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
 	gchar* text{ nullptr };
-	JsonObject* msg{ nullptr };
-	JsonObject* sdp{ nullptr };
-
-	if( gstData->state < GstData::PEER_CALL_NEGOTIATING ) {
-		CI_LOG_E ("Can't send offer, not in call");
+	if( parent->state < PEER_CALL_NEGOTIATING ) {
+		CI_LOG_E ("Can't send offer, not in call!");
 		return;
 	}
 
 	text = gst_sdp_message_as_text( offer->sdp );
 	CI_LOG_I("Sending offer: "<< text);
 
-	sdp = json_object_new();
-	json_object_set_string_member( sdp, "type", "offer" );
-	json_object_set_string_member( sdp, "sdp", text );
-	g_free( text );
+	json msg;
+	msg["sdp"]["type"] = "offer";
+	msg["sdp"]["sdp"] = text;
+	msg["localPeerId"] = parent->mPipelineData.localPeerId;
 
-	msg = json_object_new ();
-	json_object_set_int_member( msg, "localPeerId", gstData->pipelineData->localPeerId );
-	json_object_set_object_member( msg, "sdp", sdp );
-	text = get_string_from_json_object( msg );
-	json_object_unref( msg );
+	auto msgStr = msg.dump();
+	soup_websocket_connection_send_text( parent->mWSConn, msgStr.c_str() );
 
-	soup_websocket_connection_send_text( gstData->wsconn, text );
 	g_free( text );
 }
 
-std::string CinderGstWebRTC::getConnectionStateString( const GstData::ConnectionState connectionState )
+std::string CinderGstWebRTC::getConnectionStateString( const ConnectionState connectionState )
 {
 	switch( connectionState ) {
-		case GstData::CONNECTION_STATE_UNKNOWN:
+		case CONNECTION_STATE_UNKNOWN:
 		{
 			return "CONNECTION_STATE_UNKNOWN";
 		}
-		case GstData::CONNECTION_STATE_ERROR:
+		case CONNECTION_STATE_ERROR:
 		{
 			return "CONNECTION_STATE_ERROR";
 		}
-		case GstData::SERVER_CONNECTING:
+		case SERVER_CONNECTING:
 		{
 			return "SERVER_CONNECTING";
 		}
-		case GstData::SERVER_CONNECTION_ERROR:
+		case SERVER_CONNECTION_ERROR:
 		{
 			return "SERVER_CONNECTION_ERROR";
 		}
-		case GstData::SERVER_CONNECTED:
+		case SERVER_CONNECTED:
 		{
 			return "SERVER_CONNECTED";
 		}
-		case GstData::SERVER_REGISTERING:
+		case SERVER_REGISTERING:
 		{
 			return "SERVER_REGISTERING";
 		}
-		case GstData::SERVER_REGISTRATION_ERROR:
+		case SERVER_REGISTRATION_ERROR:
 		{
 			return "SERVER_REGISTRATION_ERROR";
 		}
-		case GstData::SERVER_REGISTERED:
+		case SERVER_REGISTERED:
 		{
 			return "SERVER_REGISTERED";
 		}
-		case GstData::SERVER_CLOSED:
+		case SERVER_CLOSED:
 		{
 			return "SERVER_CLOSED";
 		}
-		case GstData::PEER_CONNECTING:
+		case PEER_CONNECTING:
 		{
 			return "PEER_CONNECTING";
 		}
-		case GstData::PEER_CONNECTION_ERROR:
+		case PEER_CONNECTION_ERROR:
 		{
 			return "PEER_CONNECTION_ERROR";
 		}
-		case GstData::PEER_CONNECTED:
+		case PEER_CONNECTED:
 		{
 			return "PEER_CONNECTED";
 		}
-		case GstData::PEER_CALL_NEGOTIATING:
+		case PEER_CALL_NEGOTIATING:
 		{
 			return "PEER_CALL_NEGOTIATING";
 		}
-		case GstData::PEER_CALL_STARTED:
+		case PEER_CALL_STARTED:
 		{
 			return "PEER_CALL_STARTED";
 		}
-		case GstData::PEER_CALL_STOPPING:
+		case PEER_CALL_STOPPING:
 		{
 			return "PEER_CALL_STOPPING";
 		}
-		case GstData::PEER_CALL_STOPPED:
+		case PEER_CALL_STOPPED:
 		{
 			return "PEER_CALL_STOPPED";
 		}
-		case GstData::PEER_CALL_ERROR:
+		case PEER_CALL_ERROR:
 		{
 			return "PEER_CONNECTION_ERROR";
 		}
@@ -223,78 +203,64 @@ std::string CinderGstWebRTC::getConnectionStateString( const GstData::Connection
 
 void CinderGstWebRTC::onNegotionNeeded( GstElement* element, gpointer userData )
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
 	GstPromise* promise{ nullptr };
-	gstData->state = GstData::PEER_CALL_NEGOTIATING;
-	promise = gst_promise_new_with_change_func( onOfferCreated, gstData, nullptr );
-	g_signal_emit_by_name( gstData->webrtc, "create-offer", nullptr, promise );
+	parent->state = PEER_CALL_NEGOTIATING;
+	promise = gst_promise_new_with_change_func( onOfferCreated, parent, nullptr );
+	g_signal_emit_by_name( parent->mWebRTC, "create-offer", nullptr, promise );
 }
 
 void CinderGstWebRTC::onIceCandidate( GstElement* webrtc, guint mlineindex, gchar* candidate, gpointer userData ) 
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
-	gchar* text{ nullptr };
-	JsonObject* ice{ nullptr };
-	JsonObject* msg{ nullptr };
-	if( gstData->state < GstData::PEER_CALL_NEGOTIATING ) {
-		CI_LOG_E( "Can't send ICE, not in call.." );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
+	if( parent->state < PEER_CALL_NEGOTIATING ) {
+		CI_LOG_E( "Can't send ICE, not in call!" );
 		return;
 	}
-	ice = json_object_new();
-	json_object_set_string_member( ice, "candidate", candidate );
-	json_object_set_int_member( ice, "sdpMLineIndex", mlineindex );
-	msg = json_object_new();
-	json_object_set_int_member( msg, "localPeerId", gstData->pipelineData->localPeerId );
-	json_object_set_object_member( msg, "ice", ice );
-	text = get_string_from_json_object( msg );
-	json_object_unref( msg );
-
-	soup_websocket_connection_send_text( gstData->wsconn, text );
-	g_free( text );
+	json msg;
+	msg["ice"]["candidate"] = candidate;
+	msg["ice"]["sdpMLineIndex"] = mlineindex;
+	msg["localPeerId"] = parent->mPipelineData.localPeerId;
+	auto msgStr = msg.dump();
+	soup_websocket_connection_send_text( parent->mWSConn, msgStr.c_str() );
 }
 
+void CinderGstWebRTC::onIceConnectionState( GstElement* webrtc, GParamSpec* pspec, gpointer userData )
+{
+	GstWebRTCICEConnectionState iceConnectionState;
+	g_object_get( webrtc, "ice-connection-state", &iceConnectionState, nullptr );
+	CI_LOG_I( "ICE CONNECTION STATE: " << iceConnectionState );
+}
+
+void CinderGstWebRTC::onIceGatheringState( GstElement* webrtc, GParamSpec* pspec, gpointer userData ) 
+{
+	GstWebRTCICEGatheringState iceGatherState;
+	g_object_get( webrtc, "ice-gathering-state", &iceGatherState, nullptr );
+	auto newState = "UNKNOWN";
+	switch( iceGatherState ) {
+		case GST_WEBRTC_ICE_GATHERING_STATE_NEW:
+		{
+			newState = "NEW";
+			break;
+		}
+		case GST_WEBRTC_ICE_GATHERING_STATE_GATHERING:
+		{
+			newState = "GATHERING";
+			break;
+		}
+		case GST_WEBRTC_ICE_GATHERING_STATE_COMPLETE:
+		{
+			newState = "COMPLETE";
+			break;
+		}
+	}
+	CI_LOG_I( "ICE gathering state changed to: " << newState );
+}
+
+#if defined( ENABLE_INCOMING_VIDEO_STREAM )
 void CinderGstWebRTC::handleMediaStreams( GstPad* pad, GstElement* pipeline, const char* convertName, const char* sinkName )
 {
-
-//XXX Incoming stream to be handled by an optional appsink eventyally
-#if 0
- 	GstPad *qpad;
-	GstElement *q, *conv, *resample, *sink;
-	GstPadLinkReturn ret;
-
-	CI_LOG_I ("Trying to handle stream with " << convertName << " ! " <<  sinkName );
-
-	q = gst_element_factory_make( "queue", nullptr );
-	g_assert_nonnull( q );
-	conv = gst_element_factory_make( convertName, nullptr );
-	g_assert_nonnull( conv );
-	sink = gst_element_factory_make( sinkName, nullptr );
-	g_assert_nonnull( sink );
-
-	if( g_strcmp0( convertName, "audioconvert" ) == 0 ) {
-		/* Might also need to resample, so add it just in case.
- 	 	 * Will be a no-op if it's not required. */
-		resample = gst_element_factory_make( "audioresample", nullptr );
-		g_assert_nonnull( resample );
-		gst_bin_add_many( GST_BIN( pipeline ), q, conv, resample, sink, nullptr );
-		gst_element_sync_state_with_parent( q );
-		gst_element_sync_state_with_parent( conv );
-		gst_element_sync_state_with_parent( resample );
-		gst_element_sync_state_with_parent( sink );
-		gst_element_link_many( q, conv, resample, sink, nullptr );
-	} else {
-		gst_bin_add_many( GST_BIN ( pipeline ), q, conv, sink, nullptr );
-		gst_element_sync_state_with_parent( q );
-		gst_element_sync_state_with_parent( conv );
-		gst_element_sync_state_with_parent( sink );
-		gst_element_link_many( q, conv, sink, nullptr );
-	}
-
-	qpad = gst_element_get_static_pad( q, "sink" );
-
-	ret = gst_pad_link( pad, qpad );
-	g_assert_cmphex( ret, ==, GST_PAD_LINK_OK );
-#endif
+//XXX Incoming stream to be handled by an optional appsink eventually
 }
 
 void CinderGstWebRTC::onIncomingDecodebinStream( GstElement* decodebin, GstPad* pad, GstElement* pipeline )
@@ -337,59 +303,203 @@ void CinderGstWebRTC::onIncomingStream( GstElement* webrtc, GstPad* pad, GstElem
 	gst_pad_link( pad, sinkpad );
 	gst_object_unref( sinkpad );
 }
+#endif
+
+void CinderGstWebRTC::setPipelineEncoderName( std::string& pd )
+{
+	using namespace std::string_literals;
+	std::regex encRegex( R"(\w*enc\b)" );
+	std::smatch encMatch;
+	auto pipelineEntries = split( pd, "!" );
+	// Check if the user has passed a named encoder or not.
+	// If not, set one. The name of the encoder can later be used
+	// to set encoder properties ( e.g bitrate ) at runtime.
+	std::string encoderName = "encoder";
+	std::string encoderStr;
+	for( size_t i = 0; i < pipelineEntries.size(); ++i ) {
+		if( std::regex_search( pipelineEntries[i], encMatch, encRegex ) ) {
+			auto encoderEntry = pipelineEntries[i];
+			encoderStr = encMatch[0].str();
+			if( encoderEntry.find( "name" ) != std::string::npos ) {
+				std::smatch encNameMatch;
+				std::regex encNameRegex( R"(name=\s*(\S+))");
+				if( std::regex_search( encoderEntry, encNameMatch, encNameRegex ) ) {
+					if( encNameMatch.size() == 2 ) {
+						encoderName = encNameMatch[1].str();
+						CI_LOG_V( "Encoder name: " << mEncoderName );
+					}
+				}
+			}
+			else {
+				CI_LOG_V( "No encoder name set by user, setting a default one: " << encoderName );
+				auto encoderStrPos = pd.find( encoderStr );	
+				if( encoderStrPos != std::string::npos ) {
+					pd.insert( encoderStrPos + encoderStr.size() + 1, "name="+encoderName+" " );
+				}
+			}
+		}
+	}
+	if( encoderStr.empty() ) {
+		CI_LOG_E( "No encoder present on the pipeline description!" );
+		return;
+	}
+	mEncoder = std::make_pair( encoderStr, encoderName );
+}
 
 bool CinderGstWebRTC::startPipeline( gpointer userData )
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
-	bool success{ true };
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
 	GstStateChangeReturn ret;
 	GError* error{ nullptr };
-	auto videoPipe = "webrtcbin bundle-policy=2 name=sendrecv " +gstData->pipelineData->stunServer+
-      "appsrc name=cinder_appsrc !" +gstData->pipelineData->videoPipelineDescr+ "! sendrecv. ";
-
-	gstData->pipeline = gst_parse_launch( videoPipe.c_str()
-	  /*"audiotestsrc is-live=true wave=red-noise ! audioconvert ! audioresample ! queue ! opusenc ! rtpopuspay ! "
-      "queue ! " RTP_CAPS_OPUS "97 ! sendrecv. "*/,
-      &error );
-	gstData->webrtc = gst_bin_get_by_name( GST_BIN( gstData->pipeline ), "sendrecv" );
-	gstData->appsrc = gst_bin_get_by_name( GST_BIN( gstData->pipeline ), "cinder_appsrc" );
-	g_object_set( G_OBJECT( gstData->appsrc ), "caps",
+	auto videoPipe = "webrtcbin bundle-policy=max-bundle name=cinder_webrtc " +parent->mPipelineData.stunServer+
+      " appsrc name=cinder_appsrc !" +parent->mPipelineData.videoPipelineDescr+ "! cinder_webrtc. ";
+	parent->mPipeline = gst_parse_launch( videoPipe.c_str(), &error );
+	parent->mWebRTC = gst_bin_get_by_name( GST_BIN( parent->mPipeline ), "cinder_webrtc" );
+	parent->mAppsrc = gst_bin_get_by_name( GST_BIN( parent->mPipeline ), "cinder_appsrc" );
+	g_object_set( G_OBJECT( parent->mAppsrc ), "caps",
 		gst_caps_new_simple( "video/x-raw",
 					"format", G_TYPE_STRING, "RGBA", 
-					"width", G_TYPE_INT, gstData->pipelineData->width,
-					"height", G_TYPE_INT, gstData->pipelineData->height,
+					"width", G_TYPE_INT, parent->mPipelineData.width,
+					"height", G_TYPE_INT, parent->mPipelineData.height,
 					"framerate", GST_TYPE_FRACTION, 0, 1,
 					nullptr ), 
 	"is-live", true,
 	"max-bytes", 0,
 	"format", GST_FORMAT_TIME,
 	"stream-type", 0, nullptr );
-	if( ! gstData->webrtc ) {
-		CI_LOG_I( "WebRTC bin seems to be null. Something is off..." );
-		success = false;
-	}
-	g_signal_connect( gstData->webrtc, "on-negotiation-needed", G_CALLBACK( onNegotionNeeded ), gstData );
-	g_signal_connect( gstData->webrtc, "on-ice-candidate", G_CALLBACK( onIceCandidate ), gstData );
 
-	gst_element_set_state( gstData->pipeline, GST_STATE_READY );
-	g_signal_connect( gstData->webrtc, "pad-added", G_CALLBACK( onIncomingStream ), gstData->pipeline );
-	gst_object_unref( gstData->webrtc );
+	if( ! parent->mWebRTC ) {
+		CI_LOG_E( "WebRTC bin is empty!" );
+		g_clear_object( &parent->mPipeline );
+		return false;
+	}
+	g_signal_connect( parent->mWebRTC, "on-negotiation-needed", G_CALLBACK( onNegotionNeeded ), parent );
+	g_signal_connect( parent->mWebRTC, "on-ice-candidate", G_CALLBACK( onIceCandidate ), parent );
+	g_signal_connect( parent->mWebRTC, "notify::ice-gathering-state", G_CALLBACK( onIceGatheringState ), parent );
+	g_signal_connect( parent->mWebRTC, "notify::ice-connection-state", G_CALLBACK( onIceConnectionState ), parent );
+
+	gst_element_set_state( parent->mPipeline, GST_STATE_READY );
+	g_signal_emit_by_name( parent->mWebRTC, "create-data-channel", "channel", nullptr, &parent->mDataChannel );
+	if( parent->mDataChannel ) {
+		connectDataChannelSignals( parent->mDataChannel, parent );
+	}
+	else CI_LOG_E( "Failed to create send data channel...." );
+#if defined( ENABLE_INCOMING_VIDEO_STREAM )
+	g_signal_connect( parent->mWebRTC, "pad-added", G_CALLBACK( onIncomingStream ), parent->mPipeline );
+#endif
+	gst_object_unref( parent->mWebRTC );
 	CI_LOG_I( "Starting pipeline..........." );
-	ret = gst_element_set_state( GST_ELEMENT( gstData->pipeline ), GST_STATE_PLAYING );
+	ret = gst_element_set_state( GST_ELEMENT( parent->mPipeline ), GST_STATE_PLAYING );
 	if( ret == GST_STATE_CHANGE_FAILURE ) {
 		CI_LOG_E( "Failed to set the pipeline to PLAYING state!" );
-		success = false;
+		g_clear_object( &parent->mPipeline );
+		parent->mWebRTC = nullptr;
 	}
-	if( ! success ) {
-		g_clear_object( &gstData->pipeline );
-		gstData->webrtc = nullptr;
+	return true;
+}
+
+void CinderGstWebRTC::connectDataChannelSignals( GObject* dataChannel, gpointer userData )
+{
+	g_signal_connect( dataChannel, "on-error",
+		G_CALLBACK( onDataChannelError ), userData );
+	g_signal_connect( dataChannel, "on-open",
+		G_CALLBACK( onDataChannelOpen ), userData );
+	g_signal_connect( dataChannel, "on-close",
+		G_CALLBACK( onDataChannelClose ), userData );
+	g_signal_connect( dataChannel, "on-message-string",
+		G_CALLBACK( onDataChannelMsg ), userData );
+}
+
+void CinderGstWebRTC::onDataChannelError( GObject* dc, gpointer userData )
+{
+	CI_LOG_E( "Data channel errored" );
+}
+
+void CinderGstWebRTC::onDataChannelOpen( GObject* dc, gpointer userData )
+{
+	CI_LOG_V( "Data channel opened" );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
+	parent->mDataChannelOpenSignal.emit();
+}
+
+void CinderGstWebRTC::onDataChannelClose( GObject* dc, gpointer userData )
+{
+	CI_LOG_V( "Data channel closed" );
+}
+
+void CinderGstWebRTC::onDataChannelMsg( GObject* dc, gchar* msg, gpointer userData )
+{
+	CI_LOG_V( "Received data channel msg:" << msg );
+	auto msgStr = std::string( msg );
+	auto msgTokens = split( msgStr, "," );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
+	if( msgTokens.size() > 0 ) {
+		auto msgType = msgTokens[0];
+		if( msgType == "m" ) {
+			CI_LOG_V( "Received mouse input: " << msgTokens[1] << " << " << msgTokens[2] << " << " << msgTokens[3] );
+			auto x = std::stoi( msgTokens[1] );
+			auto y = std::stoi( msgTokens[2] );
+			auto buttonMask = std::stoi( msgTokens[3] );
+			auto window = parent->mWindow;
+			if( window ) {
+				if( parent->mButtonMask != buttonMask ) {
+					auto maxButtons = 5;
+					for( int i = 0; i < maxButtons; i++ ) {
+						if( ( buttonMask ^ parent->mButtonMask ) & ( 1 << i ) ) {
+							parent->mMouseButtonInitiator = MouseEvent::LEFT_DOWN;
+							if( i == 1 ) {
+								parent->mMouseButtonInitiator = MouseEvent::MIDDLE_DOWN;
+							}
+							else if( i == 2 ) {
+								parent->mMouseButtonInitiator = MouseEvent::RIGHT_DOWN;
+							}
+							MouseEvent event( window, parent->mMouseButtonInitiator, x, y, 0, 0.0f, 0 );
+							if( buttonMask & ( 1 << i ) ) {
+								window->emitMouseDown( &event );
+							}	
+							else {
+								window->emitMouseUp( &event );
+								parent->mMouseButtonInitiator = 0;
+							}
+						}
+					}
+					parent->mButtonMask = buttonMask;
+				}	
+				MouseEvent event( window, parent->mMouseButtonInitiator, x, y, parent->mMouseButtonInitiator, 0.0f, 0 );
+				if( parent->mMouseButtonInitiator != 0 ) {
+					window->emitMouseDrag( &event );
+				}
+				else {
+					window->emitMouseMove( &event );
+				}
+			}
+		}
+		else if( msgType == "vb" ) {
+			auto encoderElement = gst_bin_get_by_name( GST_BIN( parent->mPipeline ), parent->mEncoder.second.c_str() );
+			if( ! encoderElement ) {
+				CI_LOG_E( "No encoder " << parent->mEncoder.first 
+					<<" element found in the pipeline with name: " << parent->mEncoder.second.c_str() << "\n"
+					<<" Cannot set bitrate!" );
+				return;
+			}
+			if( parent->mEncoder.first.rfind( "x264", 0 ) == 0 ) {
+				CI_LOG_V( "x264 encoder used." );
+				g_object_set( encoderElement, "bitrate", stoi( msgTokens[1] ),nullptr );
+			} 
+			else if( parent->mEncoder.first.rfind( "vp8", 0 ) == 0 ) {
+				CI_LOG_V( "vp8 encoder used." );
+				g_object_set( encoderElement, "target-bitrate", stoi( msgTokens[1] )*1000, nullptr );
+			} 
+		}
+		else { // Unknown to CinderGstWebRTC, forward to user
+			parent->mDataChannelMsgSignal.emit( msgStr );
+		}
 	}
-	return success;
 }
 
 void CinderGstWebRTC::onServerMsg( SoupWebsocketConnection* wsConn, SoupWebsocketDataType type, GBytes* message, gpointer userData )
 {
-	GstData* gstData = reinterpret_cast<GstData*>( userData );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
 	gchar* text{ nullptr };
 	switch( type ) {
 		case SOUP_WEBSOCKET_DATA_BINARY: {
@@ -404,118 +514,100 @@ void CinderGstWebRTC::onServerMsg( SoupWebsocketConnection* wsConn, SoupWebsocke
 		}
 	}
 	if( g_strcmp0( text, "HELLO" ) == 0 ) {
-		if( gstData->state != GstData::SERVER_REGISTERING ) {
+		if( parent->state != SERVER_REGISTERING ) {
 			CI_LOG_E( "Received HELLO while not registering!" );
-			gstData->state = GstData::CONNECTION_STATE_ERROR;
+			parent->state = CONNECTION_STATE_ERROR;
 		}
 		else {
-			gstData->state = GstData::SERVER_REGISTERED;
+			parent->state = SERVER_REGISTERED;
 			CI_LOG_I( "Registered successfully with the server." );
-			if( ! setupCall( gstData ) ) {
+			if( ! setupCall( parent ) ) {
 				CI_LOG_E( "Failed to setup call with remote peer!" );
-				gstData->state = GstData::PEER_CALL_ERROR;
+				parent->state = PEER_CALL_ERROR;
 			}
 		}
 	}
 	else if( g_str_has_prefix( text, "SESSION_CREATED" )  ) {
-		if( gstData->state != GstData::PEER_CONNECTING ) {
-			CI_LOG_E( "Received SESSION_OK when not calling." );
-			gstData->state = GstData::PEER_CONNECTION_ERROR;
+		if( parent->state != PEER_CONNECTING ) {
+			CI_LOG_E( "Received SESSION_OK when not calling!" );
+			parent->state = PEER_CONNECTION_ERROR;
 		}
 		else {
-			gstData->state = GstData::PEER_CONNECTED;
-			if( ! startPipeline( gstData ) ) {
+			parent->state = PEER_CONNECTED;
+			if( ! startPipeline( parent ) ) {
 				CI_LOG_E( "Failed to start pipeline!" );
-				gstData->state = GstData::PEER_CALL_ERROR;
+				parent->state = PEER_CALL_ERROR;
 			}
 		}
 	}
+	else if( g_str_has_prefix( text, "QUIT" ) ) {
+		CI_LOG_W( "Received QUIT from server. Exiting!" );
+		app::AppBase::get()->quit();
+	}
 	else if( g_str_has_prefix( text, "ERROR" ) ) {
-		switch( gstData->state ) {
-			case GstData::SERVER_CONNECTING:
+		switch( parent->state ) {
+			case SERVER_CONNECTING:
 			{
-				gstData->state = GstData::SERVER_CONNECTION_ERROR;
+				parent->state = SERVER_CONNECTION_ERROR;
 				break;
 			}
-			case GstData::SERVER_REGISTERING:
+			case SERVER_REGISTERING:
 			{
-				gstData->state = GstData::SERVER_REGISTRATION_ERROR;
+				parent->state = SERVER_REGISTRATION_ERROR;
 				break;
 			}
-			case GstData::PEER_CONNECTING:
+			case PEER_CONNECTING:
 			{
-				gstData->state = GstData::PEER_CONNECTION_ERROR;
+				parent->state = PEER_CONNECTION_ERROR;
 			}
-			case GstData::PEER_CONNECTED:
-			case GstData::PEER_CALL_NEGOTIATING:
+			case PEER_CONNECTED:
+			case PEER_CALL_NEGOTIATING:
 			{
-				gstData->state = GstData::PEER_CALL_ERROR;
+				parent->state = PEER_CALL_ERROR;
 				break;
 				
 			}
 			default:
-				gstData->state = GstData::CONNECTION_STATE_ERROR;
+				parent->state = CONNECTION_STATE_ERROR;
 		}
 
-		CI_LOG_E( "Got connection error: " << getConnectionStateString( gstData->state ) );
+		CI_LOG_E( "Got connection error: " << getConnectionStateString( parent->state ) );
 	}
 	else {
-		JsonNode* root{ nullptr };
-		JsonObject* object{ nullptr };
-		JsonObject* child{ nullptr };
-		JsonParser* parser = json_parser_new();
-		if( ! json_parser_load_from_data( parser, text, -1, nullptr ) ) {
+		auto msgJson = json::parse( text );
+		if( msgJson.is_discarded() || msgJson.empty() ) {
 			CI_LOG_E( "Unknown message: " << text << " Ignoring..." );
-			g_object_unref( parser );
 		}
-		root = json_parser_get_root( parser );
-		if( ! JSON_NODE_HOLDS_OBJECT( root ) ) {
-			CI_LOG_E( "Unknown message: " << text << " Ignoring..." );
-			g_object_unref( parser );
-		}
-
-		object =json_node_get_object( root );
-		if( json_object_has_member( object, "sdp" ) ) {
-			int ret;
-			GstSDPMessage* sdp{ nullptr };
-			const gchar* text{ nullptr };
-			const gchar* sdpType{ nullptr };
-			GstWebRTCSessionDescription* answer{ nullptr };
-			g_assert_cmphex( gstData->state, ==, GstData::PEER_CALL_NEGOTIATING );
-			child = json_object_get_object_member( object, "sdp" );
-			if( ! json_object_has_member( child, "type" ) ) {
+		if( msgJson.find( "sdp" ) != msgJson.end() ) {
+			g_assert_cmphex( parent->state, ==, PEER_CALL_NEGOTIATING );
+			auto sdpJson = msgJson["sdp"];
+			if( sdpJson.find( "type" ) == sdpJson.end() ) {
 				CI_LOG_E( "Received SDP without type!" );
 			}
 			else {
-				sdpType = json_object_get_string_member( child, "type" );
-				//g_assert_cmphex( sdpType, ==, "answer" );
-				text = json_object_get_string_member( child, "sdp" );
-				CI_LOG_I( "Received answer: " << text );
-
+				auto typeStr = sdpJson["type"].get<std::string>();
+				const auto sdpStr = sdpJson["sdp"].get<std::string>();
+				int ret;
+				GstSDPMessage* sdp{ nullptr };
+				GstWebRTCSessionDescription* answer{ nullptr };
 				ret = gst_sdp_message_new( &sdp );
 				g_assert_cmphex( ret, ==, GST_SDP_OK );
-				ret = gst_sdp_message_parse_buffer( (guint8 *)text, strlen( text ), sdp );
+				ret = gst_sdp_message_parse_buffer( (guint8 *)sdpStr.data(), sdpStr.length(), sdp );
 				g_assert_cmphex( ret, ==, GST_SDP_OK );
 				answer = gst_webrtc_session_description_new( GST_WEBRTC_SDP_TYPE_ANSWER, sdp );
-				//g_assert_nonull( answer );
 				{
 					GstPromise* promise = gst_promise_new();
-					g_signal_emit_by_name( gstData->webrtc, "set-remote-description", answer, promise );
+					g_signal_emit_by_name( parent->mWebRTC, "set-remote-description", answer, promise );
 					gst_promise_interrupt( promise );
 					gst_promise_unref( promise );
 				}
-				gstData->state = GstData::PEER_CALL_STARTED;
+				parent->state = PEER_CALL_STARTED;
 			}
-			
 		} 
-		else if( json_object_has_member( object, "ice" ) ) {
-			const char* candidate{ nullptr };
-			gint sdpmlineindex;
-			child = json_object_get_object_member( object, "ice" );
-			candidate = json_object_get_string_member( child, "candidate" );
-			sdpmlineindex = json_object_get_int_member( child, "sdpMLineIndex" );
-
-			g_signal_emit_by_name( gstData->webrtc, "add-ice-candidate", sdpmlineindex, candidate );
+		else if( msgJson.find( "ice" ) != msgJson.end() ) {
+			auto candidate = msgJson["ice"]["candidate"].get<std::string>();
+			auto sdpmlineindex = msgJson["ice"]["sdpMLineIndex"].get<int>();
+			g_signal_emit_by_name( parent->mWebRTC, "add-ice-candidate", sdpmlineindex, candidate.c_str() );
 		}
 		else {
 			CI_LOG_W( "Ignoring unknown JSON message: " << text );
@@ -527,22 +619,22 @@ void CinderGstWebRTC::onServerMsg( SoupWebsocketConnection* wsConn, SoupWebsocke
 void CinderGstWebRTC::onServerConnected( SoupSession* session, GAsyncResult* result, gpointer userData )
 {
 	GError* error{ nullptr };
-	GstData* gstData = static_cast<GstData*>( userData );
-	gstData->wsconn = soup_session_websocket_connect_finish( session, result, &error );
+	CinderGstWebRTC* parent = reinterpret_cast<CinderGstWebRTC*>( userData );
+	parent->mWSConn = soup_session_websocket_connect_finish( session, result, &error );
 	if( error ) {
-		CI_LOG_E( "Failed to connect to websocket: " << error->message );
+		CI_LOG_E( "Failed to connect to websocket! " << error->message );
 		g_error_free( error );
 		return;
 	}	
-	if( ! gstData->wsconn ) {
-		CI_LOG_E( "Websocket didn't throw an error but it is null. Something is off....." );
+	if( ! parent->mWSConn ) {
+		CI_LOG_E( "Websocket is empty!" );
 		return;
 	}
-	gstData->state = GstData::SERVER_CONNECTED;
-	CI_LOG_I( "Connected to signalling server..." );
-	g_signal_connect( gstData->wsconn, "closed", G_CALLBACK( onServerClosed ), gstData );
-	g_signal_connect( gstData->wsconn, "message", G_CALLBACK( onServerMsg ), gstData );
-	registerWithServer( gstData );
+	parent->state = SERVER_CONNECTED;
+	CI_LOG_I( "Connected to signalling server, will now register" );
+	g_signal_connect( parent->mWSConn, "closed", G_CALLBACK( onServerClosed ), parent );
+	g_signal_connect( parent->mWSConn, "message", G_CALLBACK( onServerMsg ), parent );
+	registerWithServer( parent );
 }
 
 void CinderGstWebRTC::connectToServerAsync()
@@ -561,9 +653,8 @@ void CinderGstWebRTC::connectToServerAsync()
 	//> Construct the initial server message
 	message = soup_message_new( SOUP_METHOD_GET, mPipelineData.serverURL.c_str() );
 	CI_LOG_I( "Connecting to server...." );
-	soup_session_websocket_connect_async( session, message, nullptr, nullptr, nullptr, (GAsyncReadyCallback) onServerConnected, &mGstData );
-	mGstData.state = GstData::SERVER_CONNECTING;
-	mGstData.pipelineData = &mPipelineData;
+	soup_session_websocket_connect_async( session, message, nullptr, nullptr, nullptr, (GAsyncReadyCallback) onServerConnected, this );
+	state = SERVER_CONNECTING;
 }
 
 void CinderGstWebRTC::startGMainLoopThread()
@@ -622,19 +713,47 @@ void CinderGstWebRTC::endCapture()
 
 void CinderGstWebRTC::streamCapture()
 {
-	if( ! mAsyncSurfaceReader || ! mGstData.appsrc )
+	if( ! mAsyncSurfaceReader || ! mAppsrc )
 		return;
-	static GstClockTime timestamp = 0;
 	// Read pixels
 	mCaptureSurface = mAsyncSurfaceReader->readPixels();
 	// Create gst buffer and fill it with our pixels
 	GstBuffer* buffer = gst_buffer_new_and_alloc( mAsyncSurfaceReader->getWidth() * mAsyncSurfaceReader->getHeight() * mCaptureSurface->getPixelBytes() );
 	const auto bytesCopied = gst_buffer_fill( buffer, 0, mCaptureSurface->getData(), mAsyncSurfaceReader->getWidth() * mAsyncSurfaceReader->getHeight() * mCaptureSurface->getPixelBytes() );
-	GST_BUFFER_PTS( buffer ) = timestamp;
+	GST_BUFFER_PTS( buffer ) = mTimestamp;
+	GST_BUFFER_DTS( buffer ) = mTimestamp;
 	GST_BUFFER_DURATION( buffer ) = gst_util_uint64_scale_int( 1, GST_SECOND, 60 );
 	// Forwared the pixels along the appsrc pipeline
-	const auto result = gst_app_src_push_buffer( GST_APP_SRC_CAST( mGstData.appsrc ), buffer );
-	timestamp += GST_BUFFER_DURATION( buffer );
+	const auto result = gst_app_src_push_buffer( GST_APP_SRC_CAST( mAppsrc ), buffer );
+	mTimestamp += GST_BUFFER_DURATION( buffer );
 	//CI_LOG_V( "Push result " << result << " for copied bytes " << bytesCopied );
 }
 
+ci::gl::TextureRef CinderGstWebRTC::getStreamTexture()
+{
+	if( ! mAsyncSurfaceReader )
+		return nullptr;
+
+	return mAsyncSurfaceReader->getTexture();
+}
+
+void CinderGstWebRTC::sendStringMsg( const std::string msg )
+{
+	if( dataChannelReady() ) {
+		g_signal_emit_by_name( mDataChannel, "send-string", msg.c_str() );
+	}
+	else CI_LOG_W( "Attempting to send string msg to peer before channel has been created/opened. Skipping this msg!" );
+}
+
+const bool CinderGstWebRTC::dataChannelReady() const
+{
+	if( ! mDataChannel ) {
+		return false;
+	}
+	GstWebRTCDataChannelState dataChannelState;
+	g_object_get( mDataChannel, "ready-state", &dataChannelState, nullptr );
+	if( dataChannelState != GST_WEBRTC_DATA_CHANNEL_STATE_OPEN ) {
+		return false;
+	}
+	return true;
+}

@@ -5,8 +5,10 @@ AsyncSurfaceReader::AsyncSurfaceReader( const int width, const int height )
 : mWidth( width )
 , mHeight( height )
 {
-	mFbo[0] = ci::gl::Fbo::create( width, height );		
-	mFbo[1] = ci::gl::Fbo::create( width, height );
+	ci::gl::Fbo::Format fboFmt;
+	fboFmt.colorTexture( ci::gl::Texture::Format().loadTopDown( true ) );
+	mFbo[0] = ci::gl::Fbo::create( width, height, fboFmt );
+	mFbo[1] = ci::gl::Fbo::create( width, height, fboFmt );
 
 	mPbo[0] = ci::gl::Pbo::create( GL_PIXEL_PACK_BUFFER, width * height * 4, 0, GL_STREAM_READ );
 	mPbo[1] = ci::gl::Pbo::create( GL_PIXEL_PACK_BUFFER, width * height * 4, 0, GL_STREAM_READ );
@@ -28,14 +30,17 @@ ci::SurfaceRef AsyncSurfaceReader::readPixels()
 void AsyncSurfaceReader::bind()
 {
 	mFbo[ mFrontIndex ]->bindFramebuffer();
-	ci::gl::pushModelMatrix();
-	ci::gl::translate( { 0, mFbo[ mFrontIndex ]->getHeight(), 0 } );
-	ci::gl::scale( 1.0f, -1.0f, 1.0f );
+	ci::gl::pushMatrices();
 }
 
 void AsyncSurfaceReader::unbind()
 {
-	ci::gl::popModelMatrix();
+	ci::gl::popMatrices();
 	mFbo[ mFrontIndex ]->unbindFramebuffer();
 	std::swap( mFrontIndex, mBackIndex );
+}
+
+ci::gl::TextureRef AsyncSurfaceReader::getTexture()
+{
+	return mFbo[mFrontIndex]->getColorTexture();	
 }

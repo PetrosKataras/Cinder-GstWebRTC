@@ -12,10 +12,12 @@ public:
 	void unbind();
 	const int getWidth() { return mWidth; }
 	const int getHeight() { return mHeight; }
+	ci::gl::TextureRef getTexture();
 private:
 	ci::gl::FboRef mFbo[2];
 	ci::gl::PboRef mPbo[2];
 	ci::SurfaceRef mSurface[2];
+	ci::gl::TextureRef mTexture;
 	uint8_t mFrontIndex{ 1 };
 	uint8_t mBackIndex{ 1 };
 	int mWidth{ -1 };
