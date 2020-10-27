@@ -24,6 +24,7 @@ using namespace ci::app;
 using namespace std;
 
 #define ENCODE_H264
+#define GST_NVENC
 #define STUN_SERVER "stun-server=stun://stun.l.google.com:19302"
 #define RTP_CAPS_VP8 "application/x-rtp,media=video,encoding-name=VP8,payload="
 #define RTP_CAPS_H264 "application/x-rtp,media=video,encoding-name=H264,payload="
@@ -140,6 +141,8 @@ void BasicStreamApp::setup()
 #if defined( ENCODE_H264 )
 	#if defined( JETSON )
 	webrtcData.videoPipelineDescr = "nvvidconv ! queue ! omxh264enc control-rate=1  preset-level=3  SliceIntraRefreshEnable=true iframeinterval=30 EnableTwopassCBR=true EnableStringentBitrate=true bitrate=20000000 ! h264parse ! rtph264pay config-interval=1 name=payloader aggregate-mode=zero-latency ! queue !" RTP_CAPS_H264 "97";
+	#elif defined( GST_NVENC )
+	webrtcData.videoPipelineDescr = "videoconvert ! queue ! nvh264enc bitrate=2000 rc-mode=cbr qos=true preset=low-latency-hq ! h264parse ! rtph264pay config-interval=1 name=payloader aggregate-mode=zero-latency ! queue !" RTP_CAPS_H264 "97";
 	#else
 	webrtcData.videoPipelineDescr = "videoconvert ! video/x-raw, format=I420 ! queue ! x264enc  threads=2 speed-preset=1 tune=zerolatency key-int-max=30 ! queue !  h264parse ! rtph264pay config-interval=1 name=payloader aggregate-mode=zero-latency ! queue !" RTP_CAPS_H264 "123";
 	#endif
