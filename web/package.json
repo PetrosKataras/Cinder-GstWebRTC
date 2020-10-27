@@ -1,0 +1,17 @@
+{
+  "scripts": {
+    "lint": "./node_modules/.bin/eslint --fix ."
+  },
+  "devDependencies": {
+    "eslint": "^6.8.0",
+    "eslint-plugin-vue": "^5.2.3",
+    "lodash": ">=4.17.19"
+  },
+  "dependencies": {
+    "babel-eslint": "^10.1.0",
+    "express": "^4.17.1",
+    "minimist": "^1.2.5",
+    "vue-spinner": "^1.0.4",
+    "ws": "^7.3.1"
+  }
+}
