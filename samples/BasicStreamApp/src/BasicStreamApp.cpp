@@ -15,7 +15,7 @@
 	#include "cinder/linux/GstPlayer.h"
 	using namespace gst::video;
 #else
-	#include "cinder/GeomIO.h"
+	#include "cinder/GeomIo.h"
 	#include "cinder/ImageIo.h"
 	#include "cinder/CameraUi.h"
 #endif
