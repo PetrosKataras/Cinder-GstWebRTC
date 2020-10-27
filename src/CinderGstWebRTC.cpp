@@ -453,24 +453,35 @@ void CinderGstWebRTC::onDataChannelMsg( GObject* dc, gchar* msg, gpointer userDa
 							else if( i == 2 ) {
 								parent->mMouseButtonInitiator = MouseEvent::RIGHT_DOWN;
 							}
-							MouseEvent event( window, parent->mMouseButtonInitiator, x, y, 0, 0.0f, 0 );
 							if( buttonMask & ( 1 << i ) ) {
-								window->emitMouseDown( &event );
+								auto initiator = &parent->mMouseButtonInitiator;
+								ci::app::AppBase::get()->dispatchAsync( [ &parent, x, y] {
+									MouseEvent event( parent->mWindow, parent->mMouseButtonInitiator, x, y, 0, 0.0f, 0 );
+									parent->mWindow->emitMouseDown( &event );
+								});
 							}	
 							else {
-								window->emitMouseUp( &event );
-								parent->mMouseButtonInitiator = 0;
+								ci::app::AppBase::get()->dispatchAsync( [&parent, x, y] {
+									MouseEvent event( parent->mWindow, parent->mMouseButtonInitiator, x, y, 0, 0.0f, 0 );
+									parent->mWindow->emitMouseUp( &event );
+									parent->mMouseButtonInitiator = 0;
+								});
 							}
 						}
 					}
 					parent->mButtonMask = buttonMask;
 				}	
-				MouseEvent event( window, parent->mMouseButtonInitiator, x, y, parent->mMouseButtonInitiator, 0.0f, 0 );
 				if( parent->mMouseButtonInitiator != 0 ) {
-					window->emitMouseDrag( &event );
+					ci::app::AppBase::get()->dispatchAsync( [&parent, x, y] {
+						MouseEvent event( parent->mWindow, parent->mMouseButtonInitiator, x, y, parent->mMouseButtonInitiator, 0.0f, 0 );
+						parent->mWindow->emitMouseDrag( &event );
+					});
 				}
 				else {
-					window->emitMouseMove( &event );
+					ci::app::AppBase::get()->dispatchAsync( [&parent, x, y] {
+						MouseEvent event( parent->mWindow, parent->mMouseButtonInitiator, x, y, parent->mMouseButtonInitiator, 0.0f, 0 );
+						parent->mWindow->emitMouseMove( &event );
+					});
 				}
 			}
 		}
