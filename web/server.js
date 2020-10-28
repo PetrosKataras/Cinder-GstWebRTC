@@ -167,7 +167,7 @@ const interval = setInterval( () => {
 		ws.isAlive = false;
 		ws.ping( noop );
 	});
-}, 2000 );
+}, 4000 );
 
 const port = 8080;
 const listener = server.listen( port, '0.0.0.0', () => {
