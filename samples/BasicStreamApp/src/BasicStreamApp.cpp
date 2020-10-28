@@ -24,7 +24,7 @@ using namespace ci::app;
 using namespace std;
 
 #define ENCODE_H264
-//#define GST_NVENC
+#define GST_NVENC
 #define STUN_SERVER "stun-server=stun://stun.l.google.com:19302"
 #define RTP_CAPS_VP8 "application/x-rtp,media=video,encoding-name=VP8,payload="
 #define RTP_CAPS_H264 "application/x-rtp,media=video,encoding-name=H264,payload="
