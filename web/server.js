@@ -9,7 +9,7 @@ const { createServer } = require( 'http' );
 const WebSocket = require( 'ws' );
 const server = createServer( app );
 const websocket = new WebSocket.Server( { server } );
-const { exec } = require( 'child_process' );
+const { spawn } = require( 'child_process' );
 const parseArgs = require( 'minimist' )( process.argv.slice( 2 ) );
 if( ! parseArgs.binaryPath ) {
 	console.error( "'--binaryPath' option required! Set it to the Cinder WebRTC executable path that you want to launch." );
@@ -89,15 +89,18 @@ websocket.on( 'connection', ( ws, req ) => {
 			let peerId = splitStartRenderingHandshake[1];
 			//> Start rendering process
 			const cmd = parseArgs.binaryPath + " " + "--remotePeerId=" +peerId+ " " +"--serverUrl=http://" +listener.address().address+":"+listener.address().port;
-			exec( cmd, ( err, stdout, stderr ) => {
-				if( err ) {
-					console.log( `error: ${err.message}` );
-					return;
-				}
-				if( stderr ) {
-					console.log( `stderr: ${stderr}` );
-				}
-				console.log( `stdout: ${stdout}` );
+			const cmdSpawn = spawn( cmd, {
+				detached: true,
+				shell: true
+			});
+			cmdSpawn.on( 'exit', ( code, signal ) => {
+				console.log( 'Renderer exited with ' + `code ${code} and signal ${signal}` );
+			});
+			cmdSpawn.stdout.on( 'data', ( data ) => {
+				console.log( `Renderer cout: \n${data}` );
+			});
+			cmdSpawn.stderr.on( 'data', ( data ) => {
+				console.log( `Renderer error: \n${data}` );
 			});
 		}
 		else {
