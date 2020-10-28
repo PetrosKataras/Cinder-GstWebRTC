@@ -326,7 +326,7 @@ void CinderGstWebRTC::setPipelineEncoderName( std::string& pd )
 				if( std::regex_search( encoderEntry, encNameMatch, encNameRegex ) ) {
 					if( encNameMatch.size() == 2 ) {
 						encoderName = encNameMatch[1].str();
-						CI_LOG_V( "Encoder name: " << mEncoderName );
+						CI_LOG_V( "Encoder name: " << encoderName );
 					}
 				}
 			}
@@ -493,7 +493,11 @@ void CinderGstWebRTC::onDataChannelMsg( GObject* dc, gchar* msg, gpointer userDa
 					<<" Cannot set bitrate!" );
 				return;
 			}
-			if( parent->mEncoder.first.rfind( "x264", 0 ) == 0 ) {
+			if( parent->mEncoder.first.rfind( "nvh264", 0 ) == 0 ) {
+				CI_LOG_V( "nvh264enc encoder used." );
+				g_object_set( encoderElement, "bitrate", stoi( msgTokens[1] ),nullptr );
+			}
+			else if( parent->mEncoder.first.rfind( "x264", 0 ) == 0 ) {
 				CI_LOG_V( "x264 encoder used." );
 				g_object_set( encoderElement, "bitrate", stoi( msgTokens[1] ),nullptr );
 			} 

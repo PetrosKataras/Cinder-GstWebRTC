@@ -74,7 +74,10 @@ public:
 	static void prepareSettings( Settings *settings ) { 
 		settings->setMultiTouchEnabled( false ); 
 		settings->setWindowSize( kStreamResolution.x, kStreamResolution.y );
-		settings->disableFrameRate();
+		//> Don not rely on vertical sync when streaming, instead set the desired app framerate.
+		//> Note that if the framerate is set too high then the encoder will start struggling and 
+		//> will bite back.
+		settings->setFrameRate(60);
 	}
 	void setup() final;
 	void update() final;
@@ -136,7 +139,7 @@ void BasicStreamApp::setup()
 			CI_LOG_E( "Required arg options not specified. Aborting!" );
 			quit();
 	}
-	ci::gl::enableVerticalSync( true );
+	ci::gl::enableVerticalSync( false );
 	CinderGstWebRTC::PipelineData webrtcData;
 #if defined( ENCODE_H264 )
 	#if defined( JETSON )
@@ -144,7 +147,7 @@ void BasicStreamApp::setup()
 	#elif defined( GST_NVENC )
 	webrtcData.videoPipelineDescr = "cudaupload ! cudaconvert ! video/x-raw(memory:CUDAMemory), format=I420 !   nvh264enc bitrate=2000 rc-mode=cbr qos=true preset=low-latency-hq ! video/x-h264, profile=high ! h264parse ! rtph264pay config-interval=1 name=payloader aggregate-mode=zero-latency ! queue !" RTP_CAPS_H264 "123";
 	#else
-	webrtcData.videoPipelineDescr = "videoconvert ! video/x-raw, format=I420 ! queue ! x264enc  threads=2 speed-preset=1 tune=zerolatency key-int-max=30 ! queue !  h264parse ! rtph264pay config-interval=1 name=payloader aggregate-mode=zero-latency ! queue !" RTP_CAPS_H264 "123";
+	webrtcData.videoPipelineDescr = "videoconvert ! video/x-raw, format=I420 ! queue ! x264enc  threads=6 speed-preset=1 tune=zerolatency key-int-max=30 ! queue !  h264parse ! rtph264pay config-interval=1 name=payloader aggregate-mode=zero-latency ! queue !" RTP_CAPS_H264 "123";
 	#endif
 #else
 	#if defined( JETSON )
