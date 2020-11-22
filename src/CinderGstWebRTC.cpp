@@ -1,5 +1,7 @@
 #include "CinderGstWebRTC.h"
 #include <gst/app/app.h>
+#include <gio/gio.h>
+
 #include "cinder/Utilities.h"
 #define CI_MIN_LOG_LEVEL 2
 #include "cinder/Log.h"
@@ -657,9 +659,11 @@ void CinderGstWebRTC::connectToServerAsync()
 	SoupLogger* logger{ nullptr };
 	SoupMessage* message{ nullptr };
 	SoupSession* session{ nullptr };
-	const char* httpsAliases[] = { "wss", nullptr };
+	const char* httpsAliases[] = { "wss", "https", nullptr };
 	//> Create the ws session	
-	session = soup_session_new_with_options( SOUP_SESSION_SSL_STRICT, false/*true for using certificate*/, SOUP_SESSION_SSL_USE_SYSTEM_CA_FILE, true,
+	GError* error{ nullptr };
+	//GTlsDatabase* database = g_tls_file_database_new (, &error);
+	session = soup_session_new_with_options( SOUP_SESSION_SSL_STRICT, false/*true for using certificate*/, SOUP_SESSION_SSL_USE_SYSTEM_CA_FILE, false,
 	SOUP_SESSION_HTTPS_ALIASES, httpsAliases, nullptr );
 	//> Create the session logger
 	logger = soup_logger_new( SOUP_LOGGER_LOG_BODY, -1 );
