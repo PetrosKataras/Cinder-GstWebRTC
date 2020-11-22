@@ -259,15 +259,6 @@ class WebRTCDemo {
     }
 
     /**
-     * Handles local description creation from createAnswer.
-     *
-     * @param {RTCSessionDescription} local_sdp
-     */
-    _onLocalSDP(local_sdp) {
-        this._setDebug("Created local SDP: " + JSON.stringify(local_sdp));
-    }
-
-    /**
      * Handles incoming track event from peer connection.
      *
      * @param {Event} event - Track event: https://developer.mozilla.org/en-US/docs/Web/API/RTCTrackEvent
