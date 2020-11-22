@@ -5,14 +5,15 @@
 
 const express = require( 'express' );
 const app = express();
-const https = require( 'https' );
 const WebSocket = require( 'ws' );
 const fs = require( 'fs' );
-const server = https.createServer({
-	key: fs.readFileSync( '/path/to/key' ),
-	cert: fs.readFileSync( '/path/to/cert' ),
-	passphrase: 'YOUR PASSPHRASE HERE'
-}, app );
+const { createServer } = require( 'http' );
+const server = createServer( app );
+//const https = require( 'https' );
+//const server = https.createServer({
+//	key: fs.readFileSync( '/path/to/key' ),
+//	cert: fs.readFileSync( '/path/to/cert' )
+//}, app );
 
 const websocket = new WebSocket.Server( { server } );
 const { spawn } = require( 'child_process' );
@@ -94,7 +95,7 @@ websocket.on( 'connection', ( ws, req ) => {
 			let splitStartRenderingHandshake = message.split( " " );
 			let peerId = splitStartRenderingHandshake[1];
 			//> Start rendering process
-			const cmd = parseArgs.binaryPath + " " + "--remotePeerId=" +peerId+ " " +"--serverUrl=https://" +listener.address().address+":"+listener.address().port;
+			const cmd = parseArgs.binaryPath + " " + "--remotePeerId=" +peerId+ " " +"--serverUrl=http://" +listener.address().address+":"+listener.address().port;
 			const cmdSpawn = spawn( cmd, {
 				detached: true,
 				shell: true

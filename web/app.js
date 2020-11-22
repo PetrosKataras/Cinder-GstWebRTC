@@ -106,7 +106,7 @@ var app = new Vue({
 });
 
 var videoElement = document.getElementById( "videoStream" );
-var signalling = new CinderSignalling( new URL( "wss://" + window.location.host ), uuidv4() );
+var signalling = new CinderSignalling( new URL( "ws://" + window.location.host ), uuidv4() );
 var webrtc = new CinderWebRTCDemo( signalling, videoElement );
 
 // Function to add timestamp to logs.
