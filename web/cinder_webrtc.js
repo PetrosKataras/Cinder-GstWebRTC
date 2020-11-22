@@ -14,54 +14,54 @@ class CinderWebRTCDemo extends WebRTCDemo {
 		super( signalling, element );
 	}
 	_onPeerDataChannelMessage( event ) {
-        // Attempt to parse message as JSON
-        var msg;
-        try {
-        	msg = JSON.parse(event.data);
-        } 
+		// Attempt to parse message as JSON
+		var msg;
+		try {
+			msg = JSON.parse(event.data);
+		} 
 		catch (e) {
-            if (e instanceof SyntaxError) {
-                this._setError("error parsing data channel message as JSON: " + event.data);
-            } else {
-                this._setError("failed to parse data channel message: " + event.data);
-            }
-            return;
-        }
+			if (e instanceof SyntaxError) {
+				this._setError("error parsing data channel message as JSON: " + event.data);
+			} else {
+				this._setError("failed to parse data channel message: " + event.data);
+			}
+			return;
+		}
 
-        this._setDebug("data channel message: " + event.data);
+		this._setDebug("data channel message: " + event.data);
 
 		if( msg.type === 'hello' ) {
 			this._setStatus( msg.data );
 		}
-        else if( msg.type === 'pipeline' ) {
-        	this._setStatus(msg.data.status);
-        } 
+		else if( msg.type === 'pipeline' ) {
+			this._setStatus(msg.data.status);
+		} 
 		else if (msg.type === 'system') {
 			if (msg.action !== null) {
-                this._setDebug("received system msg, action: " + msg.data.action);
-                var action = msg.data.action;
-                if (this.onsystemaction !== null) {
-                    this.onsystemaction(action);
-                }
-            }
-        }
+				this._setDebug("received system msg, action: " + msg.data.action);
+				var action = msg.data.action;
+				if (this.onsystemaction !== null) {
+					this.onsystemaction(action);
+				}
+			}
+		}
 		else {
-            this._setError("Unhandled message recevied: " + msg.type);
-        }
+			this._setError("Unhandled message recevied: " + msg.type);
+		}
 	}
 
-    _onSDP(sdp) {
-        if (sdp.type != "offer") {
-            this._setError("received SDP was not type offer.");
-            return
-        }
+	_onSDP(sdp) {
+		if (sdp.type != "offer") {
+			this._setError("received SDP was not type offer.");
+			return
+		}
 		const sdpTransform = require( 'sdp-transform' );
 		const offerSDP = sdpTransform.parse( sdp.sdp )
-        console.log("Received remote SDP", offerSDP);
-        this.peerConnection.setRemoteDescription(sdp).then(() => {
-            this._setDebug("received SDP offer, creating answer");
-            this.peerConnection.createAnswer()
-                .then((local_sdp) => {
+		console.log("Received remote SDP", offerSDP);
+		this.peerConnection.setRemoteDescription(sdp).then(() => {
+			this._setDebug("received SDP offer, creating answer");
+			this.peerConnection.createAnswer()
+				.then((local_sdp) => {
 					//> The following hack is necessary on some Android devices
 					//> when using Chrome and H264. There is seems to be a bug
 					//> in the way that the H264 decoder is initialized in some instances
@@ -85,16 +85,16 @@ class CinderWebRTCDemo extends WebRTCDemo {
 							}
 						}
 					});
-                    this.peerConnection.setLocalDescription(local_sdp).then(() => {
-                        this._setDebug("Sending SDP answer");
-                        this.signalling.sendSDP(this.peerConnection.localDescription);
-                    }).catch( ( e ) => {
+					this.peerConnection.setLocalDescription(local_sdp).then(() => {
+						this._setDebug("Sending SDP answer");
+						this.signalling.sendSDP(this.peerConnection.localDescription);
+					}).catch( ( e ) => {
 						console.log( e );
 					});
-                }).catch(() => {
-                    this._setError("Error creating local SDP");
-                });
-        })
-    }
+				}).catch(() => {
+					this._setError("Error creating local SDP");
+				});
+		})
+	}
 
 }
