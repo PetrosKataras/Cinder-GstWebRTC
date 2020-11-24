@@ -357,6 +357,11 @@ bool CinderGstWebRTC::startPipeline( gpointer userData )
       " appsrc name=cinder_appsrc !" +parent->mPipelineData.videoPipelineDescr+ "! cinder_webrtc. ";
 	parent->mPipeline = gst_parse_launch( videoPipe.c_str(), &error );
 	parent->mWebRTC = gst_bin_get_by_name( GST_BIN( parent->mPipeline ), "cinder_webrtc" );
+	GArray* transceivers;
+	GstWebRTCRTPTransceiver* transceiver;
+	g_signal_emit_by_name( parent->mWebRTC, "get-transceivers", &transceivers );
+	transceiver = g_array_index( transceivers, GstWebRTCRTPTransceiver*, 0 );
+	transceiver->direction = GST_WEBRTC_RTP_TRANSCEIVER_DIRECTION_SENDONLY;
 	parent->mAppsrc = gst_bin_get_by_name( GST_BIN( parent->mPipeline ), "cinder_appsrc" );
 	g_object_set( G_OBJECT( parent->mAppsrc ), "caps",
 		gst_caps_new_simple( "video/x-raw",
