@@ -444,15 +444,15 @@ void CinderGstWebRTC::onDataChannelMsg( GObject* dc, gchar* msg, gpointer userDa
 		auto msgType = msgTokens[0];
 		if( msgType == "m" ) {
 			CI_LOG_V( "Received mouse input: " << msgTokens[1] << " << " << msgTokens[2] << " << " << msgTokens[3] );
-			auto x = std::stoi( msgTokens[1] );
-			auto y = std::stoi( msgTokens[2] );
-			auto buttonMask = std::stoi( msgTokens[3] );
+			auto x = std::stod( msgTokens[1] );
+			auto y = std::stod( msgTokens[2] );
+			auto buttonMask = std::stod( msgTokens[3] );
 			auto window = parent->mWindow;
 			if( window ) {
 				if( parent->mButtonMask != buttonMask ) {
 					auto maxButtons = 5;
 					for( int i = 0; i < maxButtons; i++ ) {
-						if( ( buttonMask ^ parent->mButtonMask ) & ( 1 << i ) ) {
+						if( ( (int)buttonMask ^ parent->mButtonMask ) & ( 1 << i ) ) {
 							parent->mMouseButtonInitiator = MouseEvent::LEFT_DOWN;
 							if( i == 1 ) {
 								parent->mMouseButtonInitiator = MouseEvent::MIDDLE_DOWN;
@@ -460,7 +460,7 @@ void CinderGstWebRTC::onDataChannelMsg( GObject* dc, gchar* msg, gpointer userDa
 							else if( i == 2 ) {
 								parent->mMouseButtonInitiator = MouseEvent::RIGHT_DOWN;
 							}
-							if( buttonMask & ( 1 << i ) ) {
+							if( (int)buttonMask & ( 1 << i ) ) {
 								auto initiator = &parent->mMouseButtonInitiator;
 								ci::app::AppBase::get()->dispatchAsync( [ &parent, x, y] {
 									MouseEvent event( parent->mWindow, parent->mMouseButtonInitiator, x, y, 0, 0.0f, 0 );
@@ -502,15 +502,15 @@ void CinderGstWebRTC::onDataChannelMsg( GObject* dc, gchar* msg, gpointer userDa
 			}
 			if( parent->mEncoder.first.rfind( "nvh264", 0 ) == 0 ) {
 				CI_LOG_V( "nvh264enc encoder used." );
-				g_object_set( encoderElement, "bitrate", stoi( msgTokens[1] ),nullptr );
+				g_object_set( encoderElement, "bitrate", stod( msgTokens[1] ),nullptr );
 			}
 			else if( parent->mEncoder.first.rfind( "x264", 0 ) == 0 ) {
 				CI_LOG_V( "x264 encoder used." );
-				g_object_set( encoderElement, "bitrate", stoi( msgTokens[1] ),nullptr );
+				g_object_set( encoderElement, "bitrate", stod( msgTokens[1] ),nullptr );
 			} 
 			else if( parent->mEncoder.first.rfind( "vp8", 0 ) == 0 ) {
 				CI_LOG_V( "vp8 encoder used." );
-				g_object_set( encoderElement, "target-bitrate", stoi( msgTokens[1] )*1000, nullptr );
+				g_object_set( encoderElement, "target-bitrate", stod( msgTokens[1] )*1000, nullptr );
 			} 
 		}
 		else { // Unknown to CinderGstWebRTC, forward to user
