@@ -13,6 +13,32 @@ class CinderWebRTCDemo extends WebRTCDemo {
 	constructor( signalling, element ) {
 		super( signalling, element );
 	}
+
+	/**
+	 * Initiate connection to signalling server.
+	 */
+	connect() {
+		// Create the peer connection object and bind callbacks.
+		this.peerConnection = new RTCPeerConnection(this.rtcPeerConfig);
+		this.peerConnection.ontrack = this._ontrack.bind(this);
+		this.peerConnection.onicecandidate = this._onPeerICE.bind(this);
+		this.peerConnection.ondatachannel = this._onPeerdDataChannel.bind(this);
+		this.peerConnection.oniceconnectionstatechange = () => {
+			// Local event handling.
+			this._handleConnectionStateChange(this.peerConnection.iceConnectionState);
+
+			// Pass state to event listeners.
+			this._setConnectionState(this.peerConnection.iceConnectionState);
+		};
+
+		if (this.forceTurn) {
+			this._setStatus("forcing use of TURN server");
+			var config = this.peerConnection.getConfiguration();
+			config.iceTransportPolicy = "relay";
+			this.peerConnection.setConfiguration(config);
+		}
+		this.signalling.connect();
+	}
 	_onPeerDataChannelMessage( event ) {
 		// Attempt to parse message as JSON
 		var msg;
@@ -58,10 +84,10 @@ class CinderWebRTCDemo extends WebRTCDemo {
 		const sdpTransform = require( 'sdp-transform' );
 		const offerSDP = sdpTransform.parse( sdp.sdp )
 		console.log("Received remote SDP", offerSDP);
-		this.peerConnection.setRemoteDescription(sdp).then(() => {
+		this.peerConnection.setRemoteDescription( sdp ).then( () => {
 			this._setDebug("received SDP offer, creating answer");
 			this.peerConnection.createAnswer()
-				.then((local_sdp) => {
+				.then( ( local_sdp ) => {
 					//> The following hack is necessary on some Android devices
 					//> when using Chrome and H264. There is seems to be a bug
 					//> in the way that the H264 decoder is initialized in some instances
@@ -85,13 +111,13 @@ class CinderWebRTCDemo extends WebRTCDemo {
 							}
 						}
 					});
-					this.peerConnection.setLocalDescription(local_sdp).then(() => {
+					this.peerConnection.setLocalDescription( local_sdp ).then( () => {
 						this._setDebug("Sending SDP answer");
-						this.signalling.sendSDP(this.peerConnection.localDescription);
+						this.signalling.sendSDP( this.peerConnection.localDescription );
 					}).catch( ( e ) => {
 						console.log( e );
 					});
-				}).catch(() => {
+				}).catch( () => {
 					this._setError("Error creating local SDP");
 				});
 		})
