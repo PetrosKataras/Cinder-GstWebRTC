@@ -115,6 +115,12 @@ websocket.on( 'connection', ( ws, req ) => {
 			let json = JSON.parse( message );
 			let localPeerId = json.localPeerId;
 			let remotePeerId = sessions[localPeerId];
+			//> firefox seems to have empty ice candidates occasionally
+			if( json.ice  ) {
+				if( ! json.ice.candidate ) {
+					return;
+				}
+			}
 			if( json.localPeerId != null ) {
 				peers[remotePeerId].ws.send( JSON.stringify( json ) ); 
 			}
