@@ -26,7 +26,7 @@ public:
 		std::string videoPipelineDescr;
 		int width{ -1 };
 		int height{ -1 };
-		std::string remotePeerId{ -1 };
+		std::string remotePeerId;
 		uint localPeerId{ 0 };
 		std::string serverURL;
 		std::string stunServer;
